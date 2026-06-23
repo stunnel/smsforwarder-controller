@@ -1,0 +1,192 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SmsForwarder Controller</string>
+
+    <!-- Notification -->
+    <string name="notif_channel_name">Telegram Bot Service</string>
+    <string name="notif_channel_desc">Keeps the Telegram bot running in the background</string>
+    <string name="notif_title">SmsForwarder Bot</string>
+    <string name="notif_starting">Starting…</string>
+    <string name="notif_stop">Stop</string>
+
+    <!-- Bot status -->
+    <string name="bot_status_label">Bot Status</string>
+    <string name="bot_running">Running</string>
+    <string name="bot_stopped">Stopped</string>
+    <string name="bot_running_notif">Listening for commands…</string>
+    <string name="bot_not_configured">Bot token not configured</string>
+    <string name="bot_error">Error: %1$s</string>
+
+    <!-- Buttons -->
+    <string name="btn_start">Start</string>
+    <string name="btn_stop">Stop</string>
+    <string name="btn_save">Save Settings</string>
+
+    <!-- Sections -->
+    <string name="section_basic">Basic Settings</string>
+    <string name="section_security">Security Settings</string>
+
+    <!-- Labels -->
+    <string name="label_bot_token">Telegram Bot Token</string>
+    <string name="hint_bot_token">123456789:ABCdef…</string>
+    <string name="label_port">SmsForwarder Port</string>
+    <string name="label_allowed_users">Allowed User IDs</string>
+    <string name="hint_allowed_users">123456789,987654321 (comma separated)</string>
+    <string name="label_language">Bot Language</string>
+    <string name="lang_zh">中文</string>
+    <string name="lang_en">English</string>
+    <string name="label_security_mode">Security Mode</string>
+    <string name="label_sign_secret">Sign Secret</string>
+    <string name="hint_sign_secret">HMAC-SHA256 secret key</string>
+    <string name="label_rsa_public_key">RSA Public Key (PEM)</string>
+    <string name="hint_rsa_public_key">-----BEGIN PUBLIC KEY-----\n…</string>
+    <string name="label_rsa_private_key">RSA Private Key (PEM)</string>
+    <string name="hint_rsa_private_key">-----BEGIN PRIVATE KEY-----\n…</string>
+
+    <!-- Save -->
+    <string name="save_success">Settings saved</string>
+    <string name="save_error">Save failed</string>
+
+    <!-- Bot messages -->
+    <string name="unauthorized">⛔ You are not authorized to use this bot.</string>
+    <string name="unknown_command">Unknown command. Send /help to see available commands.</string>
+    <string name="operation_cancelled">✅ Operation cancelled.</string>
+    <string name="cancel_hint">Send /cancel to cancel.</string>
+    <string name="no_permission">No permission</string>
+    <string name="cancelled">Cancelled</string>
+    <string name="unknown_error">Unknown error</string>
+    <string name="not_set">Not set</string>
+    <string name="none">None</string>
+    <string name="unknown">Unknown</string>
+
+    <!-- Config -->
+    <string name="querying_config">⏳ Querying configuration…</string>
+    <string name="remote_config_title">Remote Configuration</string>
+    <string name="device_label">Device</string>
+    <string name="sim_info_label">SIM Info</string>
+    <string name="no_sim_info">No SIM info</string>
+    <string name="enabled_features_label">Enabled Features</string>
+    <string name="feature_sms_send">Send SMS</string>
+    <string name="feature_sms_query">Query SMS</string>
+    <string name="feature_call_query">Query Calls</string>
+    <string name="feature_contact_query">Query Contacts</string>
+    <string name="feature_battery_query">Query Battery</string>
+    <string name="feature_location_query">Query Location</string>
+    <string name="query_failed">Query failed</string>
+
+    <!-- Battery -->
+    <string name="querying_battery">⏳ Querying battery…</string>
+    <string name="battery_status_title">Battery Status</string>
+    <string name="battery_level">Level</string>
+    <string name="battery_scale">Scale</string>
+    <string name="battery_voltage">Voltage</string>
+    <string name="battery_temperature">Temperature</string>
+    <string name="battery_status">Status</string>
+    <string name="battery_health">Health</string>
+    <string name="battery_plugged">Plugged</string>
+
+    <!-- Location -->
+    <string name="querying_location">⏳ Querying location…</string>
+    <string name="location_info_title">Location Info</string>
+    <string name="location_address">Address</string>
+    <string name="location_latitude">Latitude</string>
+    <string name="location_longitude">Longitude</string>
+    <string name="location_provider">Provider</string>
+    <string name="location_time">Time</string>
+    <string name="no_address">No address</string>
+
+    <!-- SMS Send -->
+    <string name="querying_sim_info">⏳ Getting SIM info…</string>
+    <string name="get_sim_failed">Failed to get SIM info</string>
+    <string name="sms_send_disabled">SMS send feature is disabled on the remote device.</string>
+    <string name="no_sim_detected">No SIM card detected.</string>
+    <string name="sms_send_select_sim">Select SIM Card</string>
+    <string name="sms_send_select_sim_prompt">Please select which SIM card to use:</string>
+    <string name="selected_sim">Selected SIM</string>
+    <string name="sms_send_input_phone">Enter Phone Number</string>
+    <string name="sms_send_phone_prompt">Please enter the recipient phone number(s). Separate multiple numbers with commas.</string>
+    <string name="sms_send_input_content">Enter Message Content</string>
+    <string name="sms_send_content_prompt">Please enter the SMS message content:</string>
+    <string name="sms_confirm_title">Confirm Send SMS</string>
+    <string name="sms_confirm_prompt">Confirm sending this SMS?</string>
+    <string name="sms_phone_label">To</string>
+    <string name="sms_content_label">Content</string>
+    <string name="confirm_send">✅ Confirm Send</string>
+    <string name="sending_sms">⏳ Sending SMS…</string>
+    <string name="sms_sent_success">SMS sent successfully</string>
+    <string name="sms_send_failed">SMS send failed</string>
+
+    <!-- SMS Query -->
+    <string name="sms_query_title">Query SMS</string>
+    <string name="sms_query_select_type">Select SMS type to query:</string>
+    <string name="sms_inbox">Received SMS</string>
+    <string name="sms_outbox">Sent SMS</string>
+    <string name="querying_sms">⏳ Querying SMS records…</string>
+    <string name="sms_records_title">SMS Records</string>
+    <string name="no_sms_records">No SMS records found.</string>
+    <string name="no_more_records">No more records.</string>
+    <string name="content_label">Content</string>
+
+    <!-- Call Query -->
+    <string name="call_query_title">Query Call Records</string>
+    <string name="call_query_select_type">Select call type to query:</string>
+    <string name="call_incoming">Incoming</string>
+    <string name="call_outgoing">Outgoing</string>
+    <string name="call_missed">Missed</string>
+    <string name="call_all">All Calls</string>
+    <string name="querying_calls">⏳ Querying call records…</string>
+    <string name="call_records_title">Call Records</string>
+    <string name="no_call_records">No call records found.</string>
+    <string name="duration_label">Duration</string>
+
+    <!-- Contact -->
+    <string name="contact_query_title">Search Contacts</string>
+    <string name="contact_query_prompt">Enter a name or phone number to search:</string>
+    <string name="querying_contacts">⏳ Searching contacts…</string>
+    <string name="no_contacts_found">No contacts found.</string>
+    <string name="found_count">%1$d found</string>
+    <string name="contact_add_title">Add Contact</string>
+    <string name="contact_add_prompt">Enter name and phone number separated by a space:\nExample: John 13800138000</string>
+    <string name="contact_format_error">❌ Format error. Please enter: Name PhoneNumber</string>
+    <string name="adding_contact">⏳ Adding contact…</string>
+    <string name="contact_added">Contact Added</string>
+    <string name="add_contact_failed">Failed to add contact</string>
+    <string name="contact_name_label">Name</string>
+    <string name="contact_phone_label">Phone</string>
+
+    <!-- WOL -->
+    <string name="wol_title">Wake on LAN</string>
+    <string name="wol_prompt">Enter MAC address (and optionally IP and port):\nFormat: MAC [IP] [PORT]\nExample: AA:BB:CC:DD:EE:FF 192.168.1.255 9</string>
+    <string name="wol_format_error">❌ Format error. Please enter at least a MAC address.</string>
+    <string name="sending_wol">⏳ Sending WOL packet…</string>
+    <string name="wol_sent">WOL Packet Sent</string>
+    <string name="wol_broadcast">broadcast</string>
+    <string name="send_failed">Send failed</string>
+
+    <!-- Clone -->
+    <string name="querying_clone">⏳ Pulling clone config…</string>
+    <string name="clone_title">Clone Configuration</string>
+    <string name="clone_empty">No clone configuration available.</string>
+    <string name="clone_failed">Failed to pull clone config</string>
+
+    <!-- Check -->
+    <string name="checking_connection">⏳ Checking connection…</string>
+    <string name="check_ok">Connection OK</string>
+    <string name="check_fail">Connection Failed</string>
+    <string name="possible_reasons">Possible reasons:</string>
+    <string name="reason_not_running">• SmsForwarder is not running</string>
+    <string name="reason_wrong_port">• Wrong port number configured</string>
+    <string name="reason_key_mismatch">• Security key mismatch</string>
+    <string name="reason_api_disabled">• API feature disabled in SmsForwarder</string>
+
+    <!-- Common -->
+    <string name="cancel">Cancel</string>
+    <string name="contact_label">Contact</string>
+    <string name="time_label">Time</string>
+    <string name="slot_label">SIM</string>
+    <string name="page_label">Page</string>
+    <string name="previous_page">◀ Prev</string>
+    <string name="next_page">Next ▶</string>
+    <string name="return_btn">↩ Return</string>
+    <string name="querying">Querying…</string>
+</resources>
