@@ -426,7 +426,7 @@ Control your SmsForwarder device via Telegram.
         )
     }
 
-    private suspend fun handleSmsQuery(botToken: String, chatId: Long) {
+    private suspend fun handleSmsQuery(botToken: String, chatId: Long, @Suppress("UNUSED_PARAMETER") userId: Long = 0L) {
         val keyboard = JSONArray().apply {
             put(JSONArray().apply {
                 put(JSONObject().apply { put("text", "📩 ${s(R.string.sms_inbox)}"); put("callback_data", "sms_type_1") })
