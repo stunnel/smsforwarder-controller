@@ -47,6 +47,13 @@
     <string name="save_success">Settings saved</string>
     <string name="save_error">Save failed</string>
 
+    <!-- Security Test -->
+    <string name="btn_test_security">Test Connection</string>
+    <string name="test_security_testing">Testing…</string>
+    <string name="test_security_ok">✅ Connection OK — security mode and secret are correct</string>
+    <string name="test_security_fail">❌ Connection failed: %1$s</string>
+    <string name="test_security_hint">Tests the current port, security mode and secret against SmsForwarder</string>
+
     <!-- Bot messages -->
     <string name="unauthorized">⛔ You are not authorized to use this bot.</string>
     <string name="unknown_command">Unknown command. Send /help to see available commands.</string>

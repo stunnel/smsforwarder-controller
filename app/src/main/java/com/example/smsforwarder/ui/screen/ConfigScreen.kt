@@ -20,6 +20,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.smsforwarder.R
+import com.example.smsforwarder.data.network.SmsForwarderApi
 import com.example.smsforwarder.data.storage.PreferencesManager
 import kotlinx.coroutines.launch
 
@@ -263,6 +264,15 @@ fun ConfigScreen(
                 }
             }
 
+            // ── Test Connection Card ─────────────────────────────────────
+            SecurityTestCard(
+                port = port,
+                securityMode = securityMode,
+                signSecret = signSecret,
+                rsaPrivateKey = rsaPrivateKey,
+                rsaPublicKey = rsaPublicKey
+            )
+
             // ── Save Button ──────────────────────────────────────────────
             Button(
                 onClick = {
@@ -402,6 +412,126 @@ private fun SectionCard(
                 modifier = Modifier.padding(bottom = 12.dp)
             )
             content()
+        }
+    }
+}
+
+/**
+ * Card that lets the user test the current port + security settings
+ * by sending a real /api/v1/config/query request to SmsForwarder.
+ * Uses the in-memory field values (not yet saved) so the user can
+ * test before saving.
+ */
+@Composable
+private fun SecurityTestCard(
+    port: String,
+    securityMode: String,
+    signSecret: String,
+    rsaPrivateKey: String,
+    rsaPublicKey: String
+) {
+    val scope = rememberCoroutineScope()
+    var isTesting by remember { mutableStateOf(false) }
+    // null = not tested yet, true = ok, false = failed
+    var testResult by remember { mutableStateOf<Boolean?>(null) }
+    var testMessage by remember { mutableStateOf("") }
+
+    val testingLabel = stringResource(R.string.test_security_testing)
+    val okLabel = stringResource(R.string.test_security_ok)
+    val failLabel = stringResource(R.string.test_security_fail)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = when (testResult) {
+                true  -> MaterialTheme.colorScheme.secondaryContainer
+                false -> MaterialTheme.colorScheme.errorContainer
+                null  -> MaterialTheme.colorScheme.surface
+            }
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.btn_test_security),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(bottom = 4.dp)
+            )
+            Text(
+                text = stringResource(R.string.test_security_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            // Result message
+            if (testMessage.isNotEmpty()) {
+                Text(
+                    text = testMessage,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = when (testResult) {
+                        true  -> MaterialTheme.colorScheme.onSecondaryContainer
+                        false -> MaterialTheme.colorScheme.onErrorContainer
+                        null  -> MaterialTheme.colorScheme.onSurface
+                    },
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+            }
+
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        isTesting = true
+                        testResult = null
+                        testMessage = testingLabel
+                        try {
+                            val portNum = port.toIntOrNull() ?: PreferencesManager.DEFAULT_PORT
+                            val api = SmsForwarderApi(
+                                baseUrl = "http://127.0.0.1:$portNum",
+                                securityMode = securityMode,
+                                signSecret = signSecret.trim(),
+                                rsaPrivateKey = rsaPrivateKey.trim(),
+                                rsaPublicKey = rsaPublicKey.trim()
+                            )
+                            val result = api.configQuery()
+                            if (result.isSuccess) {
+                                testResult = true
+                                testMessage = okLabel
+                            } else {
+                                val err = result.exceptionOrNull()?.message ?: "unknown"
+                                testResult = false
+                                testMessage = failLabel.format(err)
+                            }
+                        } catch (e: Exception) {
+                            testResult = false
+                            testMessage = failLabel.format(e.message ?: "unknown")
+                        } finally {
+                            isTesting = false
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isTesting
+            ) {
+                if (isTesting) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(testingLabel)
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.NetworkCheck,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.btn_test_security))
+                }
+            }
         }
     }
 }
