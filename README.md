@@ -69,7 +69,3 @@ The APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
 
 GitHub Actions automatically builds a debug APK on every push to `main`.  
 Pushing a `v*` tag (e.g. `v1.0.0`) triggers a release build and creates a GitHub Release with the APK attached.
-
-## License
-
-MIT
