@@ -1,4 +1,5 @@
 import java.io.File
+import java.io.ByteArrayOutputStream
 
 plugins {
     id("com.android.application")
@@ -6,16 +7,42 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+/**
+ * Helper to run a shell command and return its stdout as a trimmed string.
+ */
+fun String.runCommand(workingDir: File = File(".")): String {
+    val proc = ProcessBuilder(*split("\\s".toRegex()))
+        .directory(workingDir)
+        .redirectOutput(ProcessBuilder.Redirect.PIPE)
+        .redirectError(ProcessBuilder.Redirect.PIPE)
+        .start()
+    val out = ByteArrayOutputStream()
+    proc.inputStream.transferTo(out)
+    proc.waitFor()
+    return out.toString().trim()
+}
+
 android {
     namespace = "com.example.smsforwarder"
     compileSdk = 34
+
+    val buildVersionName: String = project.findProperty("versionName") as? String
+        ?: run {
+            // Fallback: derive version from git describe
+            try {
+                val describe = "git describe --tags --always --dirty".runCommand(rootDir)
+                describe.trim().removePrefix("v")
+            } catch (e: Exception) {
+                "1.0.0"
+            }
+        }
 
     defaultConfig {
         applicationId = "com.example.smsforwarder"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = buildVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
