@@ -10,12 +10,14 @@ android {
     namespace = "com.example.smsforwarder"
     compileSdk = 34
 
+    val buildVersionName: String = project.findProperty("versionName") as? String ?: "1.0.0"
+
     defaultConfig {
         applicationId = "com.example.smsforwarder"
         minSdk = 24
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = buildVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
