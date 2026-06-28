@@ -11,7 +11,7 @@ plugins {
  * Helper to run a shell command and return its stdout as a trimmed string.
  */
 fun String.runCommand(workingDir: File = File(".")): String {
-    val proc = ProcessBuilder(*split("\\s".toRegex()))
+    val proc = ProcessBuilder(split("\\s".toRegex()))
         .directory(workingDir)
         .redirectOutput(ProcessBuilder.Redirect.PIPE)
         .redirectError(ProcessBuilder.Redirect.PIPE)
@@ -89,6 +89,7 @@ android {
         jvmTarget = "17"
     }
     buildFeatures {
+        buildConfig = true
         compose = true
     }
     composeOptions {
