@@ -19,6 +19,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.smsforwarder.BuildConfig
 import com.example.smsforwarder.R
 import com.example.smsforwarder.data.network.SmsForwarderApi
 import com.example.smsforwarder.data.storage.PreferencesManager
@@ -315,6 +316,17 @@ fun ConfigScreen(
             }
 
             Spacer(Modifier.height(8.dp))
+
+            // ── Version Footer ───────────────────────────────────────────
+            Text(
+                text = "v${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
         }
     }
 }
