@@ -31,7 +31,8 @@ fun ConfigScreen(
     preferencesManager: PreferencesManager,
     isBotRunning: Boolean,
     onStartBot: () -> Unit,
-    onStopBot: () -> Unit
+    onStopBot: () -> Unit,
+    onConfigChanged: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -291,6 +292,7 @@ fun ConfigScreen(
                                     .mapNotNull { it.trim().toLongOrNull() }
                             )
                             preferencesManager.setLanguage(language)
+                            onConfigChanged()
                             snackbarHostState.showSnackbar(saveLabel)
                         } catch (e: Exception) {
                             snackbarHostState.showSnackbar("$saveErrorLabel: ${e.message}")
