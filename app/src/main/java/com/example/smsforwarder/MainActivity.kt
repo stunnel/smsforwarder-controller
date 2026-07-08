@@ -13,7 +13,6 @@ import com.example.smsforwarder.service.TelegramBotService
 import com.example.smsforwarder.ui.screen.ConfigScreen
 import com.example.smsforwarder.ui.theme.SmsForwarderTheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectAsState
 
 class MainActivity : ComponentActivity() {
 
