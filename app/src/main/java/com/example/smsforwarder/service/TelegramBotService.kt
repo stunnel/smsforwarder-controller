@@ -12,6 +12,7 @@ import com.example.smsforwarder.data.model.*
 import com.example.smsforwarder.data.network.SmsForwarderApi
 import com.example.smsforwarder.data.storage.PreferencesManager
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -32,9 +33,7 @@ class TelegramBotService : Service() {
         const val ACTION_STOP = "com.example.smsforwarder.STOP_BOT"
         const val PAGE_SIZE = 10
 
-        @Volatile
-        var isRunning: Boolean = false
-            private set
+        val isRunningState = MutableStateFlow(false)
 
         @Volatile
         private var instance: TelegramBotService? = null
@@ -96,7 +95,7 @@ class TelegramBotService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        isRunning = true
+        isRunningState.value = true
         instance = this
         prefs = PreferencesManager(this)
         createNotificationChannel()
@@ -115,7 +114,7 @@ class TelegramBotService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        isRunning = false
+        isRunningState.value = false
         instance = null
         pollingJob?.cancel()
         serviceScope.cancel()
@@ -199,7 +198,7 @@ class TelegramBotService : Service() {
     }
 
     private fun onConfigChangedInternal() {
-        if (!isRunning) return
+        if (!isRunningState.value) return
         serviceScope.launch {
             try {
                 currentApiClient = createApiClient()

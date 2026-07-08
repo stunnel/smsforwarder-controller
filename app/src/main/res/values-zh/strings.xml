@@ -19,7 +19,9 @@
 
     <!-- Buttons -->
     <string name="btn_start">启动</string>
+    <string name="btn_starting">启动中…</string>
     <string name="btn_stop">停止</string>
+    <string name="btn_stopping">停止中…</string>
     <string name="btn_save">保存设置</string>
 
     <!-- Sections -->

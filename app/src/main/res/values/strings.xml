@@ -19,7 +19,9 @@
 
     <!-- Buttons -->
     <string name="btn_start">Start</string>
+    <string name="btn_starting">Starting…</string>
     <string name="btn_stop">Stop</string>
+    <string name="btn_stopping">Stopping…</string>
     <string name="btn_save">Save Settings</string>
 
     <!-- Sections -->

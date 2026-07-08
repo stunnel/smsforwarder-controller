@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 fun ConfigScreen(
     preferencesManager: PreferencesManager,
     isBotRunning: Boolean,
+    isTransitioning: Boolean = false,
     onStartBot: () -> Unit,
     onStopBot: () -> Unit,
     onConfigChanged: () -> Unit = {}
@@ -104,6 +105,7 @@ fun ConfigScreen(
             // ── Bot Status Card ──────────────────────────────────────────
             BotStatusCard(
                 isRunning = isBotRunning,
+                isTransitioning = isTransitioning,
                 onStart = onStartBot,
                 onStop = onStopBot
             )
@@ -336,6 +338,7 @@ fun ConfigScreen(
 @Composable
 private fun BotStatusCard(
     isRunning: Boolean,
+    isTransitioning: Boolean = false,
     onStart: () -> Unit,
     onStop: () -> Unit
 ) {
@@ -385,7 +388,9 @@ private fun BotStatusCard(
                     )
                 }
             }
-            if (isRunning) {
+            val isStarting = isTransitioning && !isRunning
+            val isStopping = isTransitioning && isRunning
+            if (isRunning && !isStopping) {
                 OutlinedButton(
                     onClick = onStop,
                     colors = ButtonDefaults.outlinedButtonColors(
@@ -395,6 +400,34 @@ private fun BotStatusCard(
                     Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
                     Text(stringResource(R.string.btn_stop))
+                }
+            } else if (isStarting) {
+                Button(
+                    onClick = {},
+                    enabled = false
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.btn_starting))
+                }
+            } else if (isStopping) {
+                OutlinedButton(
+                    onClick = {},
+                    enabled = false,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.btn_stopping))
                 }
             } else {
                 Button(onClick = onStart) {
