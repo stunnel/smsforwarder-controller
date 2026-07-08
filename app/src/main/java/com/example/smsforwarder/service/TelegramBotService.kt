@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.example.smsforwarder.MainActivity
 import com.example.smsforwarder.R
@@ -37,6 +36,9 @@ class TelegramBotService : Service() {
         var isRunning: Boolean = false
             private set
 
+        @Volatile
+        private var instance: TelegramBotService? = null
+
         fun start(context: Context) {
             val intent = Intent(context, TelegramBotService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -49,12 +51,16 @@ class TelegramBotService : Service() {
         fun stop(context: Context) {
             context.stopService(Intent(context, TelegramBotService::class.java))
         }
+
+        fun onConfigChanged() {
+            instance?.onConfigChangedInternal()
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var pollingJob: Job? = null
     private var lastUpdateId = 0L
-    private var wakeLock: PowerManager.WakeLock? = null
+    private var currentApiClient: SmsForwarderApi? = null
 
     private lateinit var prefs: PreferencesManager
 
@@ -91,10 +97,9 @@ class TelegramBotService : Service() {
     override fun onCreate() {
         super.onCreate()
         isRunning = true
+        instance = this
         prefs = PreferencesManager(this)
         createNotificationChannel()
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SmsForwarderBot:WakeLock")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -103,7 +108,6 @@ class TelegramBotService : Service() {
             return START_NOT_STICKY
         }
         startForeground(NOTIFICATION_ID, buildNotification(getString(R.string.notif_starting)))
-        wakeLock?.acquire() // no timeout — released in onDestroy
         startPolling()
         return START_STICKY
     }
@@ -112,10 +116,10 @@ class TelegramBotService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        instance = null
         pollingJob?.cancel()
         serviceScope.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
-        wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
     }
 
@@ -167,6 +171,7 @@ class TelegramBotService : Service() {
 
     private fun startPolling() {
         pollingJob = serviceScope.launch {
+            var retryDelay = 5_000L
             while (isActive) {
                 try {
                     val botToken = prefs.getBotToken()
@@ -175,26 +180,40 @@ class TelegramBotService : Service() {
                         delay(30_000)
                         continue
                     }
-                    val port = prefs.getPort()
-                    val apiClient = SmsForwarderApi(
-                        baseUrl = "http://127.0.0.1:$port",
-                        securityMode = prefs.getSecurityMode(),
-                        signSecret = prefs.getSignSecret(),
-                        rsaPrivateKey = prefs.getRsaPrivateKey(),
-                        rsaPublicKey = prefs.getRsaPublicKey()
-                    )
+                    if (currentApiClient == null) {
+                        currentApiClient = createApiClient()
+                    }
+                    retryDelay = 5_000L
                     updateNotification(getString(R.string.bot_running_notif))
-                    pollOnce(botToken, apiClient, prefs.getAllowedUsers())
+                    pollOnce(botToken, currentApiClient!!, prefs.getAllowedUsers())
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     val msg = e.message?.take(60) ?: getString(R.string.unknown_error)
                     updateNotification(getString(R.string.bot_error, msg))
-                    delay(10_000)
+                    delay(retryDelay)
+                    retryDelay = (retryDelay * 2).coerceAtMost(120_000L)
                 }
             }
         }
     }
+
+    private fun onConfigChangedInternal() {
+        if (!isRunning) return
+        serviceScope.launch {
+            try {
+                currentApiClient = createApiClient()
+            } catch (_: Exception) { }
+        }
+    }
+
+    private suspend fun createApiClient(): SmsForwarderApi = SmsForwarderApi(
+        baseUrl = "http://127.0.0.1:${prefs.getPort()}",
+        securityMode = prefs.getSecurityMode(),
+        signSecret = prefs.getSignSecret(),
+        rsaPrivateKey = prefs.getRsaPrivateKey(),
+        rsaPublicKey = prefs.getRsaPublicKey()
+    )
 
     private suspend fun pollOnce(
         botToken: String,

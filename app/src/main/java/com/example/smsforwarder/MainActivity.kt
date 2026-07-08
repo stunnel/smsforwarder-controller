@@ -36,11 +36,11 @@ class MainActivity : ComponentActivity() {
             SmsForwarderTheme {
                 var isBotRunning by remember { mutableStateOf(TelegramBotService.isRunning) }
 
-                // Poll service state every 2 seconds
+                // Poll service state every 30 seconds
                 LaunchedEffect(Unit) {
                     while (true) {
                         isBotRunning = TelegramBotService.isRunning
-                        delay(2_000)
+                        delay(30_000)
                     }
                 }
 
@@ -48,7 +48,12 @@ class MainActivity : ComponentActivity() {
                     preferencesManager = app.preferencesManager,
                     isBotRunning = isBotRunning,
                     onStartBot = { startBotWithPermission() },
-                    onStopBot = { TelegramBotService.stop(this@MainActivity) }
+                    onStopBot = { TelegramBotService.stop(this@MainActivity) },
+                    onConfigChanged = {
+                        if (TelegramBotService.isRunning) {
+                            TelegramBotService.onConfigChanged()
+                        }
+                    }
                 )
             }
         }
