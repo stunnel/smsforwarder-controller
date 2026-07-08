@@ -13,6 +13,7 @@ import com.example.smsforwarder.service.TelegramBotService
 import com.example.smsforwarder.ui.screen.ConfigScreen
 import com.example.smsforwarder.ui.theme.SmsForwarderTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectAsState
 
 class MainActivity : ComponentActivity() {
 
@@ -34,23 +35,39 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SmsForwarderTheme {
-                var isBotRunning by remember { mutableStateOf(TelegramBotService.isRunning) }
+                // Use StateFlow from the service – instant updates, no polling needed!
+                val isBotRunning by TelegramBotService.isRunningState.collectAsState()
 
-                // Poll service state every 30 seconds
-                LaunchedEffect(Unit) {
-                    while (true) {
-                        isBotRunning = TelegramBotService.isRunning
-                        delay(30_000)
+                var isTransitioning by remember { mutableStateOf(false) }
+
+                // Watch isBotRunning: once it switches, clear the transitioning flag.
+                // Also add a safety timeout (15s) for the transition.
+                LaunchedEffect(isBotRunning) {
+                    if (isBotRunning) {
+                        isTransitioning = false
+                    }
+                }
+                LaunchedEffect(isTransitioning) {
+                    if (isTransitioning) {
+                        delay(15_000)
+                        isTransitioning = false
                     }
                 }
 
                 ConfigScreen(
                     preferencesManager = app.preferencesManager,
                     isBotRunning = isBotRunning,
-                    onStartBot = { startBotWithPermission() },
-                    onStopBot = { TelegramBotService.stop(this@MainActivity) },
+                    isTransitioning = isTransitioning,
+                    onStartBot = {
+                        isTransitioning = true
+                        startBotWithPermission()
+                    },
+                    onStopBot = {
+                        isTransitioning = true
+                        TelegramBotService.stop(this@MainActivity)
+                    },
                     onConfigChanged = {
-                        if (TelegramBotService.isRunning) {
+                        if (TelegramBotService.isRunningState.value) {
                             TelegramBotService.onConfigChanged()
                         }
                     }
