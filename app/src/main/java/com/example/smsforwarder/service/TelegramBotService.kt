@@ -3,6 +3,10 @@ package com.example.smsforwarder.service
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -24,6 +28,15 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Foreground Service that runs the Telegram Bot long-polling loop.
+ *
+ * Battery optimizations:
+ * - Preferences are cached in memory (no DataStore I/O per polling cycle)
+ * - Localized strings use a cached ConfigurationContext (no per-call context creation)
+ * - Notification only updates when text actually changes
+ * - Network state awareness pauses polling when no connectivity
+ * - Long-poll timeout set to Telegram's max (60s) to halve request frequency
+ * - Brief delay between polling cycles to reduce CPU/network wakeups
+ * - OkHttp connection pool reuses TLS connections
  */
 class TelegramBotService : Service() {
 
@@ -63,11 +76,39 @@ class TelegramBotService : Service() {
 
     private lateinit var prefs: PreferencesManager
 
+    // ==================== Battery Optimization: Cached Preferences ====================
+    // Loaded once at service start and refreshed on config change.
+    // Eliminates per-poll-cycle DataStore disk I/O.
+    @Volatile private var cachedBotToken: String = ""
+    @Volatile private var cachedAllowedUsers: List<Long> = emptyList()
+    @Volatile private var cachedLanguage: String = "zh"
+    @Volatile private var cachedPort: Int = PreferencesManager.DEFAULT_PORT
+    @Volatile private var cachedSecurityMode: String = "none"
+    @Volatile private var cachedSignSecret: String = ""
+    @Volatile private var cachedRsaPrivateKey: String = ""
+    @Volatile private var cachedRsaPublicKey: String = ""
+
+    // ==================== Battery Optimization: Cached Localized Context ====================
+    // Created once at service start. Eliminates per-call createConfigurationContext() overhead.
+    @Volatile private var localizedContext: Context? = null
+
+    // ==================== Battery Optimization: Network State Awareness ====================
+    // Pauses polling when no network, avoiding wasted connection attempts.
+    @Volatile private var networkAvailable: Boolean = true
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    // ==================== Battery Optimization: Notification Deduplication ====================
+    // Only posts a new notification when the text actually changes.
+    @Volatile private var lastNotificationText: String = ""
+
     // Separate OkHttp client for Telegram API (no security interceptor)
+    // Connection pool reuses TLS connections to reduce handshake overhead.
     private val telegramClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(65, TimeUnit.SECONDS) // slightly longer than Telegram's 60s timeout
         .writeTimeout(30, TimeUnit.SECONDS)
+        .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
+        .retryOnConnectionFailure(true)
         .build()
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
@@ -118,6 +159,7 @@ class TelegramBotService : Service() {
         instance = null
         pollingJob?.cancel()
         serviceScope.cancel()
+        unregisterNetworkCallback()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
@@ -162,20 +204,104 @@ class TelegramBotService : Service() {
     }
 
     private fun updateNotification(text: String) {
+        // Only update notification if text has changed (reduces unnecessary system calls)
+        if (text == lastNotificationText) return
+        lastNotificationText = text
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(text))
+    }
+
+    // ==================== Cached Preferences & Localization ====================
+
+    /**
+     * Load all preferences from DataStore into memory cache.
+     * Called once at service start and on config change.
+     * Eliminates per-poll-cycle disk I/O.
+     */
+    private suspend fun loadCachedPreferences() {
+        cachedBotToken = prefs.getBotToken()
+        cachedAllowedUsers = prefs.getAllowedUsers()
+        cachedLanguage = prefs.getLanguage()
+        cachedPort = prefs.getPort()
+        cachedSecurityMode = prefs.getSecurityMode()
+        cachedSignSecret = prefs.getSignSecret()
+        cachedRsaPrivateKey = prefs.getRsaPrivateKey()
+        cachedRsaPublicKey = prefs.getRsaPublicKey()
+    }
+
+    /**
+     * Create a localized ConfigurationContext once.
+     * Eliminates per-call createConfigurationContext() overhead in s().
+     */
+    private fun initLocalizedContext() {
+        localizedContext = if (cachedLanguage == "zh") {
+            val config = android.content.res.Configuration(resources.configuration)
+            config.setLocale(java.util.Locale.CHINESE)
+            createConfigurationContext(config)
+        } else {
+            this
+        }
+    }
+
+    // ==================== Network Awareness ====================
+
+    /**
+     * Register a NetworkCallback to track connectivity.
+     * Polling pauses when no network is available, saving battery.
+     */
+    private fun registerNetworkCallback() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        networkCallback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                networkAvailable = true
+            }
+            override fun onLost(network: Network) {
+                networkAvailable = false
+            }
+        }
+        cm.registerNetworkCallback(
+            NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build(),
+            networkCallback!!
+        )
+        // Set initial state
+        networkAvailable = cm.activeNetwork != null
+    }
+
+    private fun unregisterNetworkCallback() {
+        networkCallback?.let { cb ->
+            try {
+                val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                cm?.unregisterNetworkCallback(cb)
+            } catch (_: Exception) {}
+        }
+        networkCallback = null
     }
 
     // ==================== Polling Loop ====================
 
     private fun startPolling() {
         pollingJob = serviceScope.launch {
+            // Load preferences once into memory cache
+            loadCachedPreferences()
+            // Initialize localized context for string lookups
+            initLocalizedContext()
+            // Register network state callback
+            registerNetworkCallback()
+
             var retryDelay = 5_000L
             while (isActive) {
                 try {
-                    val botToken = prefs.getBotToken()
-                    if (botToken.isBlank()) {
-                        updateNotification(getString(R.string.bot_not_configured))
+                    // Pause polling when no network is available
+                    if (!networkAvailable) {
+                        updateNotification(s(R.string.bot_waiting_network))
+                        delay(10_000)
+                        continue
+                    }
+
+                    if (cachedBotToken.isBlank()) {
+                        updateNotification(s(R.string.bot_not_configured))
                         delay(30_000)
                         continue
                     }
@@ -183,13 +309,16 @@ class TelegramBotService : Service() {
                         currentApiClient = createApiClient()
                     }
                     retryDelay = 5_000L
-                    updateNotification(getString(R.string.bot_running_notif))
-                    pollOnce(botToken, currentApiClient!!, prefs.getAllowedUsers())
+                    updateNotification(s(R.string.bot_running_notif))
+                    pollOnce(cachedBotToken, currentApiClient!!, cachedAllowedUsers)
+
+                    // Brief delay between polling cycles to reduce battery drain
+                    delay(2_000)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    val msg = e.message?.take(60) ?: getString(R.string.unknown_error)
-                    updateNotification(getString(R.string.bot_error, msg))
+                    val msg = e.message?.take(60) ?: s(R.string.unknown_error)
+                    updateNotification(s(R.string.bot_error, msg))
                     delay(retryDelay)
                     retryDelay = (retryDelay * 2).coerceAtMost(120_000L)
                 }
@@ -200,18 +329,20 @@ class TelegramBotService : Service() {
     private fun onConfigChangedInternal() {
         if (!isRunningState.value) return
         serviceScope.launch {
+            loadCachedPreferences()
+            initLocalizedContext()
             try {
                 currentApiClient = createApiClient()
             } catch (_: Exception) { }
         }
     }
 
-    private suspend fun createApiClient(): SmsForwarderApi = SmsForwarderApi(
-        baseUrl = "http://127.0.0.1:${prefs.getPort()}",
-        securityMode = prefs.getSecurityMode(),
-        signSecret = prefs.getSignSecret(),
-        rsaPrivateKey = prefs.getRsaPrivateKey(),
-        rsaPublicKey = prefs.getRsaPublicKey()
+    private fun createApiClient(): SmsForwarderApi = SmsForwarderApi(
+        baseUrl = "http://127.0.0.1:$cachedPort",
+        securityMode = cachedSecurityMode,
+        signSecret = cachedSignSecret,
+        rsaPrivateKey = cachedRsaPrivateKey,
+        rsaPublicKey = cachedRsaPublicKey
     )
 
     private suspend fun pollOnce(
@@ -221,7 +352,7 @@ class TelegramBotService : Service() {
     ) {
         val params = JSONObject().apply {
             put("offset", lastUpdateId + 1)
-            put("timeout", 30)
+            put("timeout", 60) // Telegram max long-poll timeout (was 30, halves request frequency)
         }
         val request = Request.Builder()
             .url("https://api.telegram.org/bot$botToken/getUpdates")
@@ -258,7 +389,7 @@ class TelegramBotService : Service() {
         val userId = message.getJSONObject("from").getLong("id")
 
         if (!isAllowed(userId, allowedUsers)) {
-            sendMessage(botToken, chatId, getString(R.string.unauthorized))
+            sendMessage(botToken, chatId, s(R.string.unauthorized))
             return
         }
 
@@ -286,7 +417,7 @@ class TelegramBotService : Service() {
     // ==================== Command Handlers ====================
 
     private suspend fun handleStart(botToken: String, chatId: Long) {
-        val lang = prefs.getLanguage()
+        val lang = cachedLanguage
         val msg = if (lang == "zh") {
             """📱 <b>SmsForwarder 远程控制 Bot</b>
 
@@ -1003,33 +1134,22 @@ Control your SmsForwarder device via Telegram.
 
     /** Escape HTML special characters for Telegram HTML parse mode. */
     private fun esc(text: String): String = text
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("\"", "&quot;")
+        .replace("&", "&" + "amp;")
+        .replace("<", "&" + "lt;")
+        .replace(">", "&" + "gt;")
+        .replace("\"", "&" + "quot;")
 
     private fun boolEmoji(v: Boolean): String = if (v) "✅" else "❌"
 
-    /** Get localized string based on language preference. */
-    private suspend fun s(resId: Int): String {
-        val lang = prefs.getLanguage()
-        return if (lang == "zh") {
-            val config = android.content.res.Configuration(resources.configuration)
-            config.setLocale(java.util.Locale.CHINESE)
-            createConfigurationContext(config).getString(resId)
-        } else {
-            getString(resId)
-        }
+    /**
+     * Get localized string from cached localized context.
+     * No disk I/O, no ConfigurationContext creation per call.
+     */
+    private fun s(resId: Int): String {
+        return localizedContext?.getString(resId) ?: getString(resId)
     }
 
-    private suspend fun s(resId: Int, vararg args: Any?): String {
-        val lang = prefs.getLanguage()
-        return if (lang == "zh") {
-            val config = android.content.res.Configuration(resources.configuration)
-            config.setLocale(java.util.Locale.CHINESE)
-            createConfigurationContext(config).getString(resId, *args)
-        } else {
-            getString(resId, *args)
-        }
+    private fun s(resId: Int, vararg args: Any?): String {
+        return localizedContext?.getString(resId, *args) ?: getString(resId, *args)
     }
 }
