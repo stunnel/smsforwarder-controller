@@ -16,6 +16,7 @@
     <string name="bot_running_notif">正在监听命令…</string>
     <string name="bot_not_configured">Bot Token 未配置</string>
     <string name="bot_error">错误：%1$s</string>
+    <string name="bot_waiting_network">等待网络连接…</string>
 
     <!-- Buttons -->
     <string name="btn_start">启动</string>

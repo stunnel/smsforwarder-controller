@@ -16,6 +16,7 @@
     <string name="bot_running_notif">Listening for commands…</string>
     <string name="bot_not_configured">Bot token not configured</string>
     <string name="bot_error">Error: %1$s</string>
+    <string name="bot_waiting_network">Waiting for network…</string>
 
     <!-- Buttons -->
     <string name="btn_start">Start</string>
