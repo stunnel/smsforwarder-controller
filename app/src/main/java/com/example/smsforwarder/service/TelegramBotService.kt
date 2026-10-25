@@ -1,15 +1,20 @@
 package com.example.smsforwarder.service
 
 import android.app.*
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.example.smsforwarder.MainActivity
 import com.example.smsforwarder.R
 import com.example.smsforwarder.SmsForwarderApp
@@ -18,14 +23,17 @@ import com.example.smsforwarder.data.network.SmsForwarderApi
 import com.example.smsforwarder.data.storage.PreferencesManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Foreground Service that runs the Telegram Bot long-polling loop.
@@ -34,9 +42,10 @@ import java.util.concurrent.TimeUnit
  * - Preferences are cached in memory (no DataStore I/O per polling cycle)
  * - Localized strings use a cached ConfigurationContext (no per-call context creation)
  * - Notification only updates when text actually changes
- * - Network state awareness pauses polling when no connectivity
+ * - Polling suspends (no periodic wakeups) while there is no network or no valid token
  * - Long-poll timeout set to Telegram's max (60s) to halve request frequency
- * - Brief delay between polling cycles to reduce CPU/network wakeups
+ * - Errors back off exponentially instead of retrying in a tight loop
+ * - A short wake lock covers only the active part of each cycle (see [wakeLock])
  * - OkHttp connection pool reuses TLS connections
  */
 class TelegramBotService : Service() {
@@ -46,6 +55,16 @@ class TelegramBotService : Service() {
         const val NOTIFICATION_ID = 1
         const val ACTION_STOP = "com.example.smsforwarder.STOP_BOT"
         const val PAGE_SIZE = 10
+
+        private const val POLL_TIMEOUT_SECONDS = 60
+        // Upper bound for one unit of work: handling an update may wait on SmsForwarder (60s read timeout).
+        private const val WAKE_LOCK_TIMEOUT_MS = 2 * 60_000L
+        // After the getUpdates body is written, keep the CPU up just long enough to flush it.
+        private const val WAKE_LOCK_SEND_GRACE_MS = 3_000L
+        // Retries up to this delay keep the wake lock; longer ones are woken by an alarm.
+        private const val SHORT_RETRY_MS = 10_000L
+        private const val MAX_RETRY_MS = 120_000L
+        private const val ACTION_RETRY = "com.example.smsforwarder.RETRY_POLL"
 
         val isRunningState = MutableStateFlow(false)
 
@@ -94,9 +113,45 @@ class TelegramBotService : Service() {
     @Volatile private var localizedContext: Context? = null
 
     // ==================== Battery Optimization: Network State Awareness ====================
-    // Pauses polling when no network, avoiding wasted connection attempts.
-    @Volatile private var networkAvailable: Boolean = true
+    // Tracks the system default network. The polling loop suspends on it instead of waking up
+    // periodically, and the in-flight long poll is cancelled when the default network changes,
+    // so the bot reconnects at once instead of hanging on a dead socket until the read timeout.
+    private val networkAvailable = MutableStateFlow(false)
+    // Incremented when a network becomes the default or the retry alarm fires; ends a backoff early.
+    private val wakeSignal = MutableStateFlow(0)
+    @Volatile private var defaultNetwork: Network? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile private var pollCall: Call? = null
+    // Set by cancelPollCall(); consumed by fetchUpdates() so a cancel between two polls is not lost.
+    private val pollCancelRequested = AtomicBoolean(false)
+    @Volatile private var destroyed = false
+
+    // Incremented on config change; the loop waits on it while the token is missing or invalid.
+    private val configVersion = MutableStateFlow(0)
+
+    // ==================== Battery Optimization: Wake Lock ====================
+    // Held only while actively working (handling updates, sending the next request) and allowed
+    // to expire while the long poll waits for Telegram: an incoming packet wakes the CPU by itself.
+    // Without it the CPU may suspend between receiving a response and sending the next request,
+    // and the bot stalls until something else wakes the device (coroutine delays don't advance
+    // while the CPU is suspended).
+    private lateinit var wakeLock: PowerManager.WakeLock
+
+    // Backoff waits longer than SHORT_RETRY_MS run without the wake lock; this alarm wakes the
+    // device for the retry, since the coroutine delay alone would not advance in suspend.
+    private val retryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            acquireWakeLock()
+            wakeSignal.value++
+        }
+    }
+    private val retryAlarmIntent: PendingIntent by lazy {
+        PendingIntent.getBroadcast(
+            this, 1,
+            Intent(ACTION_RETRY).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
 
     // ==================== Battery Optimization: Notification Deduplication ====================
     // Only posts a new notification when the text actually changes.
@@ -104,13 +159,9 @@ class TelegramBotService : Service() {
 
     // Separate OkHttp client for Telegram API (no security interceptor)
     // Connection pool reuses TLS connections to reduce handshake overhead.
-    private val telegramClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(65, TimeUnit.SECONDS) // slightly longer than Telegram's 60s timeout
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
-        .retryOnConnectionFailure(true)
-        .build()
+    // Replaced on default-network change (see resetConnections).
+    @Volatile private var telegramClient = buildTelegramClient()
+    @Volatile private var pollClient = buildPollClient(telegramClient)
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
@@ -140,6 +191,14 @@ class TelegramBotService : Service() {
         isRunningState.value = true
         instance = this
         prefs = PreferencesManager(this)
+        wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SmsForwarder:TelegramBot")
+            .apply { setReferenceCounted(false) }
+        ContextCompat.registerReceiver(
+            this, retryReceiver, IntentFilter(ACTION_RETRY), ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        // On the main thread, paired with unregister in onDestroy.
+        registerNetworkCallback()
         createNotificationChannel()
     }
 
@@ -166,11 +225,19 @@ class TelegramBotService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        destroyed = true
         isRunningState.value = false
         instance = null
         pollingJob?.cancel()
         serviceScope.cancel()
+        // Coroutine cancellation does not interrupt the blocking long poll; cancel the call itself.
+        cancelPollCall()
         unregisterNetworkCallback()
+        cancelRetryAlarm()
+        try {
+            unregisterReceiver(retryReceiver)
+        } catch (_: Exception) {}
+        releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
@@ -257,27 +324,45 @@ class TelegramBotService : Service() {
     // ==================== Network Awareness ====================
 
     /**
-     * Register a NetworkCallback to track connectivity.
-     * Polling pauses when no network is available, saving battery.
+     * Track the default network. Registered once per service instance.
+     * Only the default network matters: tracking every network with INTERNET could leave the
+     * state stuck at "no network" when e.g. mobile data comes up before Wi-Fi is reported lost.
      */
     private fun registerNetworkCallback() {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-        networkCallback = object : ConnectivityManager.NetworkCallback() {
+        if (networkCallback != null) return
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        if (cm == null) {
+            networkAvailable.value = true
+            return
+        }
+        val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                networkAvailable = true
+                val previous = defaultNetwork
+                defaultNetwork = network
+                // Keep the CPU awake until the loop has reacted (it releases the lock itself).
+                acquireWakeLock()
+                networkAvailable.value = true
+                wakeSignal.value++
+                if (previous != null && previous != network) {
+                    // Default network switched (e.g. Wi-Fi -> mobile): sockets on the old network are dead.
+                    resetConnections()
+                }
             }
+
             override fun onLost(network: Network) {
-                networkAvailable = false
+                if (network != defaultNetwork) return
+                defaultNetwork = null
+                networkAvailable.value = false
+                resetConnections()
             }
         }
-        cm.registerNetworkCallback(
-            NetworkRequest.Builder()
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .build(),
-            networkCallback!!
-        )
-        // Set initial state
-        networkAvailable = cm.activeNetwork != null
+        try {
+            // Delivers onAvailable immediately if there already is a default network.
+            cm.registerDefaultNetworkCallback(callback)
+            networkCallback = callback
+        } catch (_: Exception) {
+            networkAvailable.value = true
+        }
     }
 
     private fun unregisterNetworkCallback() {
@@ -290,6 +375,56 @@ class TelegramBotService : Service() {
         networkCallback = null
     }
 
+    private fun cancelPollCall() {
+        pollCancelRequested.set(true)
+        pollCall?.cancel()
+    }
+
+    /**
+     * Drop all connections to Telegram. Cancelling an HTTP/2 call only resets its stream and
+     * evictAll() skips connections in use, so a stale connection could otherwise go back to the
+     * pool and be reused by the next request. Swapping in fresh clients avoids that entirely.
+     */
+    private fun resetConnections() {
+        val old = telegramClient
+        val fresh = buildTelegramClient()
+        telegramClient = fresh
+        pollClient = buildPollClient(fresh)
+        cancelPollCall()
+        old.connectionPool.evictAll()
+    }
+
+    private fun buildTelegramClient(): OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(65, TimeUnit.SECONDS) // slightly longer than Telegram's 60s timeout
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
+        .retryOnConnectionFailure(true)
+        .build()
+
+    /**
+     * getUpdates client. Once the request body is written, the wake lock is shortened to a brief
+     * grace period (enough to flush it) and expires while waiting for the long-poll response;
+     * it is re-acquired as soon as the response headers arrive. (OkHttp 4 fires
+     * responseHeadersStart only after the headers were read, so it can't mark the wait.)
+     */
+    private fun buildPollClient(base: OkHttpClient): OkHttpClient = base.newBuilder()
+        .eventListener(object : okhttp3.EventListener() {
+            override fun requestBodyEnd(call: Call, byteCount: Long) =
+                acquireWakeLock(WAKE_LOCK_SEND_GRACE_MS)
+            override fun responseHeadersEnd(call: Call, response: Response) = acquireWakeLock()
+        })
+        .build()
+
+    private fun acquireWakeLock(timeoutMs: Long = WAKE_LOCK_TIMEOUT_MS) {
+        // Non-reference-counted: re-acquiring just re-arms the timeout.
+        if (!destroyed) wakeLock.acquire(timeoutMs)
+    }
+
+    private fun releaseWakeLock() {
+        if (wakeLock.isHeld) wakeLock.release()
+    }
+
     // ==================== Polling Loop ====================
 
     private fun startPolling() {
@@ -298,43 +433,107 @@ class TelegramBotService : Service() {
             loadCachedPreferences()
             // Initialize localized context for string lookups
             initLocalizedContext()
-            // Register network state callback
-            registerNetworkCallback()
-
-            var retryDelay = 5_000L
+            var failures = 0
             while (isActive) {
+                acquireWakeLock()
+                val configAtStart = configVersion.value
+                val wakeAtStart = wakeSignal.value
                 try {
-                    // Pause polling when no network is available
-                    if (!networkAvailable) {
+                    if (!networkAvailable.value) {
                         updateNotification(s(R.string.bot_waiting_network))
-                        delay(10_000)
+                        releaseWakeLock()
+                        networkAvailable.first { it }
                         continue
                     }
 
-                    if (cachedBotToken.isBlank()) {
+                    val botToken = cachedBotToken
+                    if (botToken.isBlank()) {
                         updateNotification(s(R.string.bot_not_configured))
-                        delay(30_000)
+                        waitForConfigChange(configAtStart)
                         continue
                     }
-                    if (currentApiClient == null) {
-                        currentApiClient = createApiClient()
-                    }
-                    retryDelay = 5_000L
-                    updateNotification(s(R.string.bot_running_notif))
-                    pollOnce(cachedBotToken, currentApiClient!!, cachedAllowedUsers)
+                    val apiClient = currentApiClient ?: createApiClient().also { currentApiClient = it }
 
-                    // Brief delay between polling cycles to reduce battery drain
-                    delay(2_000)
+                    updateNotification(s(R.string.bot_running_notif))
+                    val updates = fetchUpdates(botToken)
+                    failures = 0
+                    for (update in updates) {
+                        acquireWakeLock() // re-arm the timeout per update
+                        // Advance the offset first so a failing update is not fetched again forever.
+                        lastUpdateId = update.getLong("update_id")
+                        try {
+                            handleUpdate(update, botToken, apiClient, cachedAllowedUsers)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                        }
+                    }
                 } catch (e: CancellationException) {
                     throw e
+                } catch (e: TelegramApiException) {
+                    if (e.code == 401 || e.code == 404) {
+                        // Token rejected: retrying cannot help until the user changes the config.
+                        updateNotification(s(R.string.bot_invalid_token))
+                        waitForConfigChange(configAtStart)
+                    } else {
+                        failures++
+                        updateNotification(s(R.string.bot_error, e.message?.take(60)))
+                        backoff(failures, wakeAtStart, e.retryAfterSeconds)
+                    }
                 } catch (e: Exception) {
+                    failures++
                     val msg = e.message?.take(60) ?: s(R.string.unknown_error)
                     updateNotification(s(R.string.bot_error, msg))
-                    delay(retryDelay)
-                    retryDelay = (retryDelay * 2).coerceAtMost(120_000L)
+                    backoff(failures, wakeAtStart)
                 }
             }
         }
+    }
+
+    /** Suspend without holding the wake lock until the config changes. */
+    private suspend fun waitForConfigChange(seenVersion: Int) {
+        releaseWakeLock()
+        configVersion.first { it != seenVersion }
+    }
+
+    /**
+     * Exponential backoff: 5s, 10s, 20s ... capped at 2 min, or Telegram's retry_after.
+     * Short waits keep the wake lock. Longer ones release it and set an inexact
+     * allow-while-idle alarm to wake the device for the retry (Doze may postpone it, which is
+     * acceptable while Telegram keeps failing). A new default network ends the wait early, since
+     * connectivity changes are the most common cause of errors; [wakeAtStart] is captured before
+     * the failed attempt so a network change during it is not missed.
+     */
+    private suspend fun backoff(failures: Int, wakeAtStart: Int, retryAfterSeconds: Int = 0) {
+        val waitMs = if (retryAfterSeconds > 0) {
+            retryAfterSeconds * 1000L
+        } else {
+            (5_000L shl (failures - 1).coerceIn(0, 5)).coerceAtMost(MAX_RETRY_MS)
+        }
+        if (waitMs <= SHORT_RETRY_MS) {
+            acquireWakeLock()
+        } else {
+            scheduleRetryAlarm(waitMs)
+            releaseWakeLock()
+        }
+        try {
+            withTimeoutOrNull(waitMs) { wakeSignal.first { it != wakeAtStart } }
+        } finally {
+            if (waitMs > SHORT_RETRY_MS) cancelRetryAlarm()
+        }
+    }
+
+    private fun scheduleRetryAlarm(delayMs: Long) {
+        val am = getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        am.setAndAllowWhileIdle(
+            AlarmManager.ELAPSED_REALTIME_WAKEUP,
+            SystemClock.elapsedRealtime() + delayMs,
+            retryAlarmIntent
+        )
+    }
+
+    private fun cancelRetryAlarm() {
+        (getSystemService(Context.ALARM_SERVICE) as? AlarmManager)?.cancel(retryAlarmIntent)
     }
 
     private fun onConfigChangedInternal() {
@@ -345,6 +544,9 @@ class TelegramBotService : Service() {
             try {
                 currentApiClient = createApiClient()
             } catch (_: Exception) { }
+            configVersion.value++
+            // The running long poll still uses the old token; restart it with the new one.
+            cancelPollCall()
         }
     }
 
@@ -356,31 +558,56 @@ class TelegramBotService : Service() {
         rsaPublicKey = cachedRsaPublicKey
     )
 
-    private suspend fun pollOnce(
-        botToken: String,
-        apiClient: SmsForwarderApi,
-        allowedUsers: List<Long>
-    ) {
+    /**
+     * One getUpdates long poll. Blocking; call from Dispatchers.IO.
+     * Returns an empty list if the call was cancelled (network change, config change, shutdown).
+     * Throws [TelegramApiException] when Telegram answers with an error.
+     */
+    private fun fetchUpdates(botToken: String): List<JSONObject> {
         val params = JSONObject().apply {
             put("offset", lastUpdateId + 1)
-            put("timeout", 60) // Telegram max long-poll timeout (was 30, halves request frequency)
+            put("timeout", POLL_TIMEOUT_SECONDS)
         }
         val request = Request.Builder()
             .url("https://api.telegram.org/bot$botToken/getUpdates")
             .post(params.toString().toRequestBody(jsonMediaType))
             .build()
-        val response = withContext(Dispatchers.IO) { telegramClient.newCall(request).execute() }
-        if (!response.isSuccessful) return
-        val body = response.body?.string() ?: return
-        val json = JSONObject(body)
-        if (!json.optBoolean("ok", false)) return
-        val results = json.getJSONArray("result")
-        for (i in 0 until results.length()) {
-            val update = results.getJSONObject(i)
-            lastUpdateId = update.getLong("update_id")
-            handleUpdate(update, botToken, apiClient, allowedUsers)
+        val call = pollClient.newCall(request)
+        pollCall = call
+        // A cancel requested before pollCall was set (config/network change, shutdown) applies here.
+        if (pollCancelRequested.getAndSet(false)) call.cancel()
+        try {
+            call.execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                val json = try { JSONObject(body) } catch (_: Exception) { null }
+                if (json == null || !response.isSuccessful || !json.optBoolean("ok", false)) {
+                    throw TelegramApiException(
+                        code = json?.optInt("error_code", response.code) ?: response.code,
+                        description = json?.optString("description").orEmpty()
+                            .ifEmpty { "HTTP ${response.code}" },
+                        retryAfterSeconds = json?.optJSONObject("parameters")
+                            ?.optInt("retry_after", 0) ?: 0
+                    )
+                }
+                val results = json.getJSONArray("result")
+                return List(results.length()) { results.getJSONObject(it) }
+            }
+        } catch (e: IOException) {
+            if (call.isCanceled()) {
+                pollCancelRequested.set(false)
+                return emptyList()
+            }
+            throw e
+        } finally {
+            if (pollCall === call) pollCall = null
         }
     }
+
+    private class TelegramApiException(
+        val code: Int,
+        description: String,
+        val retryAfterSeconds: Int
+    ) : Exception("$code $description")
 
     // ==================== Update Router ====================
 
@@ -1129,9 +1356,10 @@ Control your SmsForwarder device via Telegram.
                     .url(url)
                     .post(params.toString().toRequestBody(jsonMediaType))
                     .build()
-                val response = telegramClient.newCall(request).execute()
-                val body = response.body?.string() ?: return@withContext null
-                JSONObject(body)
+                telegramClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: return@withContext null
+                    JSONObject(body)
+                }
             } catch (_: Exception) {
                 null
             }

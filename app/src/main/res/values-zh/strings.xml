@@ -17,6 +17,7 @@
     <string name="bot_not_configured">Bot Token 未配置</string>
     <string name="bot_error">错误：%1$s</string>
     <string name="bot_waiting_network">等待网络连接…</string>
+    <string name="bot_invalid_token">Bot Token 被 Telegram 拒绝，请检查配置</string>
 
     <!-- Buttons -->
     <string name="btn_start">启动</string>
