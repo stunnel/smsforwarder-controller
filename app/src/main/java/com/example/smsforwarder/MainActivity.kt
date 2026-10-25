@@ -9,10 +9,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
 import com.example.smsforwarder.service.TelegramBotService
 import com.example.smsforwarder.ui.screen.ConfigScreen
 import com.example.smsforwarder.ui.theme.SmsForwarderTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -63,6 +66,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onStopBot = {
                         isTransitioning = true
+                        app.appScope.launch { app.preferencesManager.setBotEnabled(false) }
                         TelegramBotService.stop(this@MainActivity)
                     },
                     onConfigChanged = {
@@ -75,20 +79,50 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // If the bot is enabled but not running (e.g. killed by the system or the ROM),
+        // opening the app brings it back. A bot the user stopped stays stopped.
+        // Done in onStart (not onCreate) so the activity is visible when the FGS is started.
+        if (TelegramBotService.isRunningState.value) return
+        val app = application as SmsForwarderApp
+        lifecycleScope.launch {
+            val prefs = app.preferencesManager
+            val shouldStart = prefs.isBotEnabled() && prefs.getBotToken().isNotBlank()
+            // The DataStore read is async: only start if the activity is still visible,
+            // otherwise startForegroundService() from the background throws on Android 12+.
+            if (shouldStart && !TelegramBotService.isRunningState.value &&
+                lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            ) {
+                try {
+                    TelegramBotService.start(this@MainActivity)
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
     private fun startBotWithPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val permission = Manifest.permission.POST_NOTIFICATIONS
             when {
                 ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED -> {
-                    TelegramBotService.start(this)
+                    enableAndStartBot()
                 }
                 else -> {
-                    pendingStartBot = { TelegramBotService.start(this) }
+                    pendingStartBot = { enableAndStartBot() }
                     requestNotificationPermission.launch(permission)
                 }
             }
         } else {
-            TelegramBotService.start(this)
+            enableAndStartBot()
         }
+    }
+
+    /** User-initiated start: remember it so the bot comes back after reboot / process death. */
+    private fun enableAndStartBot() {
+        val app = application as SmsForwarderApp
+        app.appScope.launch { app.preferencesManager.setBotEnabled(true) }
+        TelegramBotService.start(this)
     }
 }
