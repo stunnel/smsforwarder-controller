@@ -12,6 +12,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.smsforwarder.MainActivity
 import com.example.smsforwarder.R
+import com.example.smsforwarder.SmsForwarderApp
 import com.example.smsforwarder.data.model.*
 import com.example.smsforwarder.data.network.SmsForwarderApi
 import com.example.smsforwarder.data.storage.PreferencesManager
@@ -144,11 +145,21 @@ class TelegramBotService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            // Stopped from the notification: remember it so boot / app launch won't restart the bot.
+            // Use the app scope, since serviceScope is cancelled in onDestroy right after stopSelf().
+            val app = application as SmsForwarderApp
+            app.appScope.launch { app.preferencesManager.setBotEnabled(false) }
             stopSelf()
             return START_NOT_STICKY
         }
-        startForeground(NOTIFICATION_ID, buildNotification(getString(R.string.notif_starting)))
-        startPolling()
+        // start() may be called several times (boot, app launch, Start button). Every
+        // startForegroundService() call must be answered with startForeground(), but only
+        // one polling loop may run, otherwise parallel getUpdates calls conflict (HTTP 409).
+        val text = lastNotificationText.ifEmpty { getString(R.string.notif_starting) }
+        startForeground(NOTIFICATION_ID, buildNotification(text))
+        if (pollingJob?.isActive != true) {
+            startPolling()
+        }
         return START_STICKY
     }
 

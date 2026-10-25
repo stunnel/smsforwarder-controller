@@ -3,6 +3,7 @@ package com.example.smsforwarder.data.storage
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -25,6 +26,7 @@ class PreferencesManager(private val context: Context) {
         private val KEY_SM4_KEY = stringPreferencesKey("sm4_key")
         private val KEY_ALLOWED_USERS = stringPreferencesKey("allowed_users")
         private val KEY_LANGUAGE = stringPreferencesKey("language")
+        private val KEY_BOT_ENABLED = booleanPreferencesKey("bot_enabled")
 
         const val SMS_FORWARDER_HOST = "127.0.0.1"
         const val DEFAULT_PORT = 5000
@@ -44,6 +46,10 @@ class PreferencesManager(private val context: Context) {
     }
     val language: Flow<String> = context.dataStore.data.map { it[KEY_LANGUAGE] ?: "zh" }
 
+    // Whether the user wants the bot running (survives reboot / process death).
+    // Defaults to true so installs that predate this flag keep auto-starting on boot.
+    val botEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_BOT_ENABLED] ?: true }
+
     suspend fun getBotToken(): String = botToken.first()
     suspend fun getPort(): Int = port.first()
     suspend fun getSecurityMode(): String = securityMode.first()
@@ -53,6 +59,7 @@ class PreferencesManager(private val context: Context) {
     suspend fun getSm4Key(): String = sm4Key.first()
     suspend fun getAllowedUsers(): List<Long> = allowedUsers.first()
     suspend fun getLanguage(): String = language.first()
+    suspend fun isBotEnabled(): Boolean = botEnabled.first()
 
     suspend fun setBotToken(value: String) =
         context.dataStore.edit { it[KEY_BOT_TOKEN] = value }
@@ -80,6 +87,9 @@ class PreferencesManager(private val context: Context) {
 
     suspend fun setLanguage(value: String) =
         context.dataStore.edit { it[KEY_LANGUAGE] = value }
+
+    suspend fun setBotEnabled(value: Boolean) =
+        context.dataStore.edit { it[KEY_BOT_ENABLED] = value }
 
     fun getBaseUrl(port: Int): String = "http://$SMS_FORWARDER_HOST:$port"
 }
