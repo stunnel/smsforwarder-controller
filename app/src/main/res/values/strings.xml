@@ -17,6 +17,7 @@
     <string name="bot_not_configured">Bot token not configured</string>
     <string name="bot_error">Error: %1$s</string>
     <string name="bot_waiting_network">Waiting for network…</string>
+    <string name="bot_invalid_token">Bot token rejected by Telegram, please check settings</string>
 
     <!-- Buttons -->
     <string name="btn_start">Start</string>
