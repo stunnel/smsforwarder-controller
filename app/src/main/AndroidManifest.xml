@@ -36,6 +36,7 @@
              from BOOT_COMPLETED. -->
         <service
             android:name=".service.TelegramBotService"
+            android:directBootAware="true"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
@@ -43,11 +44,16 @@
                 android:value="Telegram bot long polling to remotely control the local SmsForwarder app" />
         </service>
 
+        <!-- directBootAware: LOCKED_BOOT_COMPLETED arrives right after boot, before the user
+             unlocks; BOOT_COMPLETED only after the first unlock. -->
         <receiver
             android:name=".receiver.BootReceiver"
+            android:directBootAware="true"
             android:exported="true">
             <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 

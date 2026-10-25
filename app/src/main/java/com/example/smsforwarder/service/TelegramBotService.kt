@@ -15,6 +15,7 @@ import android.os.SystemClock
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.os.UserManagerCompat
 import com.example.smsforwarder.MainActivity
 import com.example.smsforwarder.R
 import com.example.smsforwarder.SmsForwarderApp
@@ -54,6 +55,9 @@ class TelegramBotService : Service() {
         const val CHANNEL_ID = "telegram_bot_channel"
         const val NOTIFICATION_ID = 1
         const val ACTION_STOP = "com.example.smsforwarder.STOP_BOT"
+        private const val EXTRA_BOOT_STAGE = "boot_stage"
+        const val BOOT_STAGE_LOCKED = "locked"
+        const val BOOT_STAGE_UNLOCKED = "unlocked"
         const val PAGE_SIZE = 10
 
         private const val POLL_TIMEOUT_SECONDS = 60
@@ -71,8 +75,10 @@ class TelegramBotService : Service() {
         @Volatile
         private var instance: TelegramBotService? = null
 
-        fun start(context: Context) {
+        /** [bootStage] is set by BootReceiver so the bot can tell allowed users the device rebooted. */
+        fun start(context: Context, bootStage: String? = null) {
             val intent = Intent(context, TelegramBotService::class.java)
+                .putExtra(EXTRA_BOOT_STAGE, bootStage)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -169,6 +175,14 @@ class TelegramBotService : Service() {
     // Per-user conversation state
     private val userStates = mutableMapOf<Long, UserState>()
 
+    // ==================== Boot / Direct Boot State ====================
+    // Notice to send to allowed users once Telegram is reachable (string resource id).
+    @Volatile private var pendingBootNotice: Int? = null
+    // The "rebooted, still locked" notice went out, so unlocking gets its own notice.
+    @Volatile private var lockedNoticeSent = false
+    // Chats already told that the device is locked (cleared on unlock).
+    private val lockedWarnedChats: MutableSet<Long> = Collections.synchronizedSet(mutableSetOf())
+
     data class UserState(
         var waitingForSmsPhone: Boolean = false,
         var waitingForSmsContent: Boolean = false,
@@ -216,6 +230,18 @@ class TelegramBotService : Service() {
         // one polling loop may run, otherwise parallel getUpdates calls conflict (HTTP 409).
         val text = lastNotificationText.ifEmpty { getString(R.string.notif_starting) }
         startForeground(NOTIFICATION_ID, buildNotification(text))
+        when (intent?.getStringExtra(EXTRA_BOOT_STAGE)) {
+            BOOT_STAGE_LOCKED -> if (!isUserUnlocked()) {
+                pendingBootNotice = R.string.notice_rebooted_locked
+            }
+            BOOT_STAGE_UNLOCKED -> {
+                pendingBootNotice =
+                    if (lockedNoticeSent) R.string.notice_unlocked else R.string.notice_rebooted
+                lockedWarnedChats.clear()
+                // Send the notice now instead of after the running long poll (up to 60s).
+                cancelPollCall()
+            }
+        }
         if (pollingJob?.isActive != true) {
             startPolling()
         }
@@ -454,6 +480,7 @@ class TelegramBotService : Service() {
                     }
                     val apiClient = currentApiClient ?: createApiClient().also { currentApiClient = it }
 
+                    pendingBootNotice?.let { sendBootNotice(botToken, it) }
                     updateNotification(s(R.string.bot_running_notif))
                     val updates = fetchUpdates(botToken)
                     failures = 0
@@ -487,6 +514,36 @@ class TelegramBotService : Service() {
                     backoff(failures, wakeAtStart)
                 }
             }
+        }
+    }
+
+    private fun isUserUnlocked(): Boolean = UserManagerCompat.isUserUnlocked(this)
+
+    /**
+     * Tell allowed users that the device rebooted / was unlocked. Private chat ids equal user ids.
+     * Kept pending (retried next cycle) until Telegram was reached for at least one user.
+     */
+    private suspend fun sendBootNotice(botToken: String, noticeRes: Int) {
+        val users = cachedAllowedUsers
+        if (users.isEmpty()) {
+            pendingBootNotice = null
+            return
+        }
+        val text = "${s(noticeRes)}\n\n🕒 ${dateFormat.format(Date())}"
+        var reached = false
+        for (userId in users) {
+            val params = JSONObject().apply {
+                put("chat_id", userId)
+                put("text", text)
+                put("parse_mode", "HTML")
+            }
+            if (postTelegramWithResponse("https://api.telegram.org/bot$botToken/sendMessage", params) != null) {
+                reached = true
+            }
+        }
+        if (reached) {
+            if (pendingBootNotice == noticeRes) pendingBootNotice = null
+            if (noticeRes == R.string.notice_rebooted_locked) lockedNoticeSent = true
         }
     }
 
@@ -629,6 +686,11 @@ class TelegramBotService : Service() {
         if (!isAllowed(userId, allowedUsers)) {
             sendMessage(botToken, chatId, s(R.string.unauthorized))
             return
+        }
+
+        // Before the first unlock SmsForwarder cannot read SMS, call log or contacts.
+        if (!isUserUnlocked() && lockedWarnedChats.add(chatId)) {
+            sendMessage(botToken, chatId, s(R.string.device_locked_warning))
         }
 
         when (text) {
@@ -907,7 +969,8 @@ Control your SmsForwarder device via Telegram.
                 "${s(R.string.reason_not_running)}\n" +
                 "${s(R.string.reason_wrong_port)}\n" +
                 "${s(R.string.reason_key_mismatch)}\n" +
-                s(R.string.reason_api_disabled)
+                s(R.string.reason_api_disabled) +
+                if (isUserUnlocked()) "" else "\n${s(R.string.reason_device_locked)}"
             editMessage(botToken, chatId, loadingId, errorMsg)
         }
     }
