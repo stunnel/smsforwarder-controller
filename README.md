@@ -40,6 +40,13 @@ An Android app that acts as a **Telegram Bot controller** for [SmsForwarder](htt
 4. Use **Test Connection** to verify the port and security settings are correct before saving
 5. Tap **Save Settings**, then tap **Start** to launch the foreground service
 6. Open Telegram and send `/start` to your bot
+7. In **Background running**, allow the app to run unrestricted. On MIUI/HyperOS, ColorOS, OriginOS, EMUI and similar ROMs also enable **Auto-start** and set the battery policy to **No restrictions**, otherwise the bot cannot start after a reboot
+
+## Background & Reboot Behaviour
+
+- The bot keeps running until you tap **Stop** (in the app or the notification). That choice is remembered: a stopped bot is not restarted on boot or when the app is opened, and a running bot is restarted after a reboot or an app update.
+- The bot supports Direct Boot: after a reboot it starts **before the device is unlocked** (SmsForwarder supports this too). Allowed users get a "device rebooted" message, and another one once the device is unlocked. Until the first unlock, Android does not let apps read SMS, the call log or contacts, so those queries may fail; other commands depend on what SmsForwarder can do while the device is locked.
+- To allow this, settings are stored in device-protected storage, which is encrypted with the device key but not with your lock screen credential (SmsForwarder stores its config the same way). Settings from older versions are migrated automatically after the first unlock.
 
 ## Security Modes
 
@@ -55,7 +62,7 @@ An Android app that acts as a **Telegram Bot controller** for [SmsForwarder](htt
 - **UI**: Jetpack Compose + Material3
 - **Networking**: OkHttp (Telegram long-polling + SmsForwarder API)
 - **Storage**: DataStore Preferences
-- **Background**: Foreground Service with WakeLock
+- **Background**: Direct-boot-aware foreground service (`specialUse`) doing Telegram long polling; a short partial wake lock is held only while handling updates, not while waiting for Telegram
 
 ## Building
 
