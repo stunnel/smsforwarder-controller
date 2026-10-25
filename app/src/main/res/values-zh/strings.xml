@@ -205,4 +205,10 @@
     <string name="next_page">下一页 ▶</string>
     <string name="return_btn">↩ 返回</string>
     <string name="querying">查询中…</string>
+    <string name="section_background">后台运行</string>
+    <string name="battery_opt_ignored">电池优化：已不受限制 ✅</string>
+    <string name="battery_opt_restricted">电池优化：受限制，系统可能会冻结 Bot</string>
+    <string name="btn_ignore_battery_opt">允许后台运行</string>
+    <string name="btn_app_settings">打开应用设置</string>
+    <string name="background_hint">部分系统（MIUI/HyperOS、ColorOS、OriginOS、EMUI 等）还需要为本应用开启「自启动」，并将电池策略设为「无限制」，否则重启后无法自动启动。在最近任务中锁定本应用也有帮助。</string>
 </resources>

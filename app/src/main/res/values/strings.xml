@@ -205,4 +205,10 @@
     <string name="next_page">Next ▶</string>
     <string name="return_btn">↩ Return</string>
     <string name="querying">Querying…</string>
+    <string name="section_background">Background running</string>
+    <string name="battery_opt_ignored">Battery optimization: unrestricted ✅</string>
+    <string name="battery_opt_restricted">Battery optimization: restricted — the system may freeze the bot</string>
+    <string name="btn_ignore_battery_opt">Allow running in background</string>
+    <string name="btn_app_settings">Open app settings</string>
+    <string name="background_hint">Some ROMs (MIUI/HyperOS, ColorOS, OriginOS, EMUI, etc.) also require enabling \"Auto-start\" and setting the battery policy to \"No restrictions\" for this app, otherwise it cannot start after a reboot. Locking the app in the recent apps list also helps.</string>
 </resources>
