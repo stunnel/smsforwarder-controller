@@ -189,6 +189,11 @@
     <string name="reason_wrong_port">• 端口号配置错误</string>
     <string name="reason_key_mismatch">• 安全密钥不匹配</string>
     <string name="reason_api_disabled">• SmsForwarder 中 API 功能未启用</string>
+    <string name="reason_device_locked">• 设备重启后尚未解锁（短信、通话记录、联系人暂不可用）</string>
+    <string name="notice_rebooted_locked">📱 设备已重启\n\nBot 已上线，但设备尚未解锁。解锁前短信、通话记录、联系人可能无法查询。</string>
+    <string name="notice_unlocked">🔓 设备已解锁\n\n所有功能已恢复可用。</string>
+    <string name="notice_rebooted">📱 设备已重启\n\nBot 已上线。</string>
+    <string name="device_locked_warning">⚠️ 设备重启后尚未解锁，解锁前短信、通话记录、联系人查询可能失败。</string>
 
     <!-- Common -->
     <string name="cancel">取消</string>

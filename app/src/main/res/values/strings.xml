@@ -189,6 +189,11 @@
     <string name="reason_wrong_port">• Wrong port number configured</string>
     <string name="reason_key_mismatch">• Security key mismatch</string>
     <string name="reason_api_disabled">• API feature disabled in SmsForwarder</string>
+    <string name="reason_device_locked">• Device rebooted and not unlocked yet (SMS, call log and contacts unavailable)</string>
+    <string name="notice_rebooted_locked">📱 Device rebooted\n\nThe bot is online, but the device has not been unlocked yet. SMS, call log and contacts may be unavailable until it is unlocked.</string>
+    <string name="notice_unlocked">🔓 Device unlocked\n\nAll features are available again.</string>
+    <string name="notice_rebooted">📱 Device rebooted\n\nThe bot is online.</string>
+    <string name="device_locked_warning">⚠️ The device rebooted and has not been unlocked yet. SMS, call log and contact queries may fail until it is unlocked.</string>
 
     <!-- Common -->
     <string name="cancel">Cancel</string>
