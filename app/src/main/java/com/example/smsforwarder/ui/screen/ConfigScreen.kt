@@ -1,5 +1,11 @@
 package com.example.smsforwarder.ui.screen
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -12,6 +18,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -19,6 +26,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.example.smsforwarder.BuildConfig
 import com.example.smsforwarder.R
 import com.example.smsforwarder.data.network.SmsForwarderApi
@@ -109,6 +118,9 @@ fun ConfigScreen(
                 onStart = onStartBot,
                 onStop = onStopBot
             )
+
+            // ── Background Running ───────────────────────────────────────
+            BackgroundRunCard()
 
             // ── Basic Settings ───────────────────────────────────────────
             SectionCard(title = stringResource(R.string.section_basic)) {
@@ -437,6 +449,90 @@ private fun BotStatusCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * Shows whether the app is exempt from battery optimization and links to the system
+ * settings needed to keep the bot alive (battery exemption, app details for OEM auto-start).
+ */
+@Composable
+private fun BackgroundRunCard() {
+    val context = LocalContext.current
+    var ignoringBatteryOpt by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+    // Re-check when returning from the settings screen.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        ignoringBatteryOpt = isIgnoringBatteryOptimizations(context)
+    }
+
+    SectionCard(title = stringResource(R.string.section_background)) {
+        Text(
+            text = stringResource(
+                if (ignoringBatteryOpt) R.string.battery_opt_ignored else R.string.battery_opt_restricted
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (ignoringBatteryOpt)
+                MaterialTheme.colorScheme.onSurface
+            else
+                MaterialTheme.colorScheme.error
+        )
+        Spacer(Modifier.height(8.dp))
+        if (!ignoringBatteryOpt) {
+            Button(
+                onClick = { requestIgnoreBatteryOptimizations(context) },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.BatteryChargingFull, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.btn_ignore_battery_opt))
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        OutlinedButton(
+            onClick = { openAppDetailsSettings(context) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.btn_app_settings))
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.background_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+    val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    return pm.isIgnoringBatteryOptimizations(context.packageName)
+}
+
+private fun requestIgnoreBatteryOptimizations(context: Context) {
+    val request = Intent(
+        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+        Uri.parse("package:${context.packageName}")
+    )
+    try {
+        context.startActivity(request)
+    } catch (_: ActivityNotFoundException) {
+        // Some ROMs remove the direct dialog; fall back to the full list.
+        try {
+            context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        } catch (_: ActivityNotFoundException) {
+            openAppDetailsSettings(context)
+        }
+    }
+}
+
+private fun openAppDetailsSettings(context: Context) {
+    try {
+        context.startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+        )
+    } catch (_: ActivityNotFoundException) {
     }
 }
 
