@@ -42,19 +42,30 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 7
 
+      # Manual runs also build a release-signed APK (uploaded as an artifact only), so a test
+      # build can be installed over the released app without a signature mismatch.
       - name: Decode Keystore
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > ${{ github.workspace }}/keystore.p12
 
       - name: Build Release APK
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/keystore.p12
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew assembleRelease --no-daemon -PversionName=${{ env.VERSION_NAME }}
+        # VERSION_NAME is only set for tags; otherwise build.gradle.kts falls back to git describe.
+        run: ./gradlew assembleRelease --no-daemon ${VERSION_NAME:+-PversionName=$VERSION_NAME}
+
+      - name: Upload Release APK
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-release
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 7
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
